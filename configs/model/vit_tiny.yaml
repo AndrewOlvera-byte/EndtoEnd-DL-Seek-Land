@@ -1,0 +1,15 @@
+_target_: src.models.vit.VisionTransformer
+image_size: ${data.img_size}
+patch_size: 4
+embed_dim: 192
+depth: 6
+num_heads: 3
+mlp_ratio: 4.0
+num_classes: 10
+dropout: 0.0
+attn_dropout: 0.0
+grad_ckpt: false
+drop_path: 0.0
+bias_init_uniform_logits: true
+
+

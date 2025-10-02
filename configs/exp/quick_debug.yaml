@@ -1,0 +1,25 @@
+# @package _global_
+# configs/exp/quick_debug.yaml
+defaults:
+  - /data: cifar_10
+  - /model: vit_small
+  - /optim: adamw
+  - /sched: cosine
+  - /trainer: lightning
+  - /loss: soft_cross_entropy
+  - _self_
+
+# Fast iteration settings
+optim:
+  max_epochs: 5
+  fused: false
+  
+trainer:
+  check_val_every_n_epoch: 1
+  
+io:
+  batch_size: 128
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true

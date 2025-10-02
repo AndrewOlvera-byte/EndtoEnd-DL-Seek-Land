@@ -1,0 +1,24 @@
+# docker-compose.yml
+services:
+  train-lightning:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USER_ID: ${UID:-1000}
+        GROUP_ID: ${GID:-1000}
+    image: cifar10-vit:dev
+    working_dir: /workspace
+    # Mount the whole repo; output/ and data/ are inside it
+    volumes:
+      - ./:/workspace
+      - pip-cache:/home/appuser/.cache/pip
+    environment:
+      - DATA_ROOT=/workspace/data
+      - OUTPUT_DIR=/workspace/output
+    shm_size: "8g"         # helps with many DataLoader workers
+    gpus: all              # enable NVIDIA GPUs
+    entrypoint: ["/usr/bin/tini", "--", "python", "-m", "src.train_lightning"]
+
+volumes:
+  pip-cache:

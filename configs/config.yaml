@@ -1,0 +1,30 @@
+defaults:
+  - _self_
+  - exp: vit_cifar10
+  - run: train_lightning
+
+seed: 42
+device: cuda
+precision: bf16-mixed
+channels_last: true
+cudnn_benchmark: true
+
+io:
+  batch_size: 512
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
+
+# EMA control (experiment-level)
+ema:
+  enable: true
+  decay: 0.9999
+
+# Hydra working directories
+hydra:
+  run:
+    dir: ${oc.env:OUTPUT_DIR, output}/run_${now:%Y-%m-%d_%H-%M-%S}
+  sweep:
+    dir: ${oc.env:OUTPUT_DIR, output}/multirun
+    subdir: run_${now:%Y-%m-%d_%H-%M-%S}

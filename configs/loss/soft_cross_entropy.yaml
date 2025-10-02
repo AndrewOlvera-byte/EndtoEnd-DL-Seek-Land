@@ -1,0 +1,4 @@
+name: soft_cross_entropy
+reduction: mean
+
+

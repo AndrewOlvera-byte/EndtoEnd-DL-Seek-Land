@@ -1,0 +1,8 @@
+# Scheduler hyperparams
+name: cosine
+# If null, we will use optim.max_epochs in code
+t_max: null
+eta_min: 1e-5
+warmup_epochs: ${optim.warmup_epochs}
+
+

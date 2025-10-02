@@ -1,0 +1,7 @@
+/src/__pycache__
+/src/utils/__pycache__
+/data/cifar-10-batches-py
+*.gz
+/src/models/__pycache__
+/src/data/__pycache__
+/output

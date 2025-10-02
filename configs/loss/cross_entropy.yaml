@@ -1,0 +1,6 @@
+# Loss configuration
+name: cross_entropy
+label_smoothing: 0.0
+reduction: mean
+
+

@@ -1,0 +1,11 @@
+# @package _global_
+# Curated experiment: ViT small on CIFAR-10 with AdamW and Lightning trainer
+defaults:
+  - /data: cifar_10
+  - /model: vit_small
+  - /optim: adamw
+  - /sched: cosine
+  - /trainer: lightning
+  - /loss: soft_cross_entropy
+  - _self_
+
