@@ -1,0 +1,5 @@
+# @package env
+_target_: src.envs.franka_kitchen.build_franka_kitchen_env
+tasks_to_complete: ["microwave", "kettle", "slide_cabinet", "top_burner"]
+device: ${device}
+

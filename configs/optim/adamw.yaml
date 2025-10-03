@@ -1,10 +1,10 @@
-# Optimizer hyperparams for AdamW
+# @package optim
 name: adamw
 lr: 2e-4   # base for batch=256; auto-scales to 4e-4 at batch=512
-weight_decay: 0.05
 betas: [0.9, 0.999]
-warmup_epochs: 10
+weight_decay: 0.05
 max_epochs: 300
+warmup_epochs: 10
 min_lr: 1e-5
 fused: false
 no_decay_keys: ["bias", "norm", "pos_embed", "cls_token"]

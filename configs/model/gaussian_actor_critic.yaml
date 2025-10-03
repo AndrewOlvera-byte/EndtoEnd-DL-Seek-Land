@@ -1,0 +1,7 @@
+# @package model
+name: gaussian_actor_critic
+obs_dim: 60  # overridden if env/datamodule exposes dims
+hidden_sizes: [256, 256]
+act_dim: 9
+init_log_std: -0.5
+

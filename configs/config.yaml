@@ -1,7 +1,10 @@
 defaults:
   - _self_
-  - exp: vit_cifar10
+  - task: bc
   - run: train_lightning
+  - optim: adamw
+  - sched: cosine
+  - trainer: lightning
 
 seed: 42
 device: cuda

@@ -14,22 +14,29 @@ from hydra.utils import instantiate
 from src.utils.seed import set_seed
 from src.utils.speed import speed_setup
 from src.utils.progress import OneBasedTQDMProgressBar
-from src.lit_module import LitClassifier
 from src.registry import (
     MODEL_REGISTRY,
     DATAMODULE_REGISTRY,
     LOSS_REGISTRY,
+    TASK_REGISTRY,
 )
 # Side-effect imports to populate registries
-import src.models.vit  # noqa: F401
-import src.data.cifar10_datamodule  # noqa: F401
+# Keep only relevant registrations
+import src.models.mlp  # noqa: F401
+import src.models.policies  # noqa: F401
+import src.data.trajectory_datamodule  # noqa: F401
+import src.data.minari_datamodule  # noqa: F401
+import src.tasks.bc  # noqa: F401
+import src.tasks.rl  # noqa: F401
 import src.optimizers  # noqa: F401
 import src.losses  # noqa: F401
 from src.utils.mixup_scheduler import MixupCutmixScheduler
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
-    print(OmegaConf.to_yaml(cfg))
+    # Only print config if not running from Ray Tune (less noise)
+    if not os.environ.get("TUNE_ORIG_WORKING_DIR"):
+        print(OmegaConf.to_yaml(cfg))
     # Persist resolved config in the Hydra run dir (cwd is already the run dir)
     try:
         Path("config_dump.yaml").write_text(OmegaConf.to_yaml(cfg))
@@ -38,79 +45,172 @@ def main(cfg: DictConfig):
     set_seed(cfg.seed)
     speed_setup(cfg.channels_last, cfg.cudnn_benchmark)
 
+    # Build datamodule first (if any) so we can infer dims for model
+    datamodule = None
+    if hasattr(cfg, "data") and cfg.get("data") is not None:
+        if isinstance(cfg.data, DictConfig) and "_target_" in cfg.data:
+            datamodule = instantiate(
+                cfg.data,
+                batch_size=cfg.io.batch_size,
+                num_workers=cfg.io.num_workers,
+                prefetch_factor=cfg.io.prefetch_factor,
+                persistent_workers=cfg.io.persistent_workers,
+                pin_memory=cfg.io.pin_memory,
+            )
+        elif hasattr(cfg.data, "name"):
+            datamodule = DATAMODULE_REGISTRY.build(
+                cfg.data.name,
+                **{k: v for k, v in dict(cfg.data).items() if k != "name"},
+                batch_size=cfg.io.batch_size,
+                num_workers=cfg.io.num_workers,
+                prefetch_factor=cfg.io.prefetch_factor,
+                persistent_workers=cfg.io.persistent_workers,
+                pin_memory=cfg.io.pin_memory,
+            )
+        # Pre-setup to expose dims if available
+        try:
+            datamodule.prepare_data()
+        except Exception:
+            pass
+        try:
+            datamodule.setup()
+        except Exception:
+            pass
+
     # Instantiate model: prefer Hydra instantiate when _target_ is provided; otherwise use registry by name
+    # If datamodule exposed dims, override config fields if present
+    model_cfg = dict(cfg.model) if not (isinstance(cfg.model, DictConfig) and "_target_" in cfg.model) else cfg.model
+    if datamodule is not None and hasattr(datamodule, "obs_dim") and getattr(datamodule, "obs_dim") is not None:
+        if isinstance(model_cfg, DictConfig):
+            model_cfg["obs_dim"] = int(getattr(datamodule, "obs_dim"))
+            if "action_dim" in model_cfg:
+                model_cfg["action_dim"] = int(getattr(datamodule, "act_dim", model_cfg.get("action_dim", 0)))
+            if "act_dim" in model_cfg:
+                model_cfg["act_dim"] = int(getattr(datamodule, "act_dim", model_cfg.get("act_dim", 0)))
+        else:
+            model_cfg["obs_dim"] = int(getattr(datamodule, "obs_dim"))
+            if "action_dim" in model_cfg:
+                model_cfg["action_dim"] = int(getattr(datamodule, "act_dim", model_cfg.get("action_dim", 0)))
+            if "act_dim" in model_cfg:
+                model_cfg["act_dim"] = int(getattr(datamodule, "act_dim", model_cfg.get("act_dim", 0)))
+
     if isinstance(cfg.model, DictConfig) and "_target_" in cfg.model:
-        model = instantiate(cfg.model)
+        model = instantiate(model_cfg)
     else:
         model = MODEL_REGISTRY.build(
-            cfg.model.name,
-            image_size=cfg.model.image_size,
-            patch_size=cfg.model.patch_size,
-            embed_dim=cfg.model.embed_dim,
-            depth=cfg.model.depth,
-            num_heads=cfg.model.num_heads,
-            mlp_ratio=cfg.model.mlp_ratio,
-            num_classes=cfg.model.num_classes,
-            dropout=cfg.model.dropout,
-            attn_dropout=cfg.model.attn_dropout,
+            model_cfg["name"],
+            **{k: v for k, v in dict(model_cfg).items() if k != "name"}
         )
     if cfg.channels_last:
         # Safe for 2D inputs; ViT consumes 4D tensors before patching
         model = model.to(memory_format=torch.channels_last)
 
-    if isinstance(cfg.data, DictConfig) and "_target_" in cfg.data:
-        datamodule = instantiate(
-            cfg.data,
-            batch_size=cfg.io.batch_size,
-            num_workers=cfg.io.num_workers,
-            prefetch_factor=cfg.io.prefetch_factor,
-            persistent_workers=cfg.io.persistent_workers,
-            pin_memory=cfg.io.pin_memory,
+    # Task selection: build BC or RL LightningModule
+    task_type = str(getattr(cfg.task, "name", "")).lower()
+    if task_type not in ("bc", "rl"):
+        raise RuntimeError("cfg.task.name must be 'bc' or 'rl'")
+
+    ema_enable = bool(getattr(cfg, "ema", {}).get("enable", False))
+    ema_decay = float(getattr(cfg, "ema", {}).get("decay", 0.9999))
+
+    optim_kwargs = {
+        "lr": cfg.optim.lr,
+        "betas": tuple(cfg.optim.betas) if hasattr(cfg.optim, "betas") else (0.9, 0.999),
+        "weight_decay": cfg.optim.weight_decay if hasattr(cfg.optim, "weight_decay") else 0.0,
+        "fused": bool(getattr(cfg.optim, "fused", False)),
+    }
+    sched_kwargs = {
+        "t_max": int(getattr(cfg.sched, "t_max", 0)) if getattr(cfg.sched, "t_max", None) is not None else int(getattr(cfg.optim, "max_epochs", cfg.trainer.max_epochs)),
+        "eta_min": getattr(cfg.sched, "eta_min", 1e-6),
+        "warmup_epochs": int(getattr(cfg.optim, "warmup_epochs", 0)),
+        "max_epochs": int(getattr(cfg.optim, "max_epochs", cfg.trainer.max_epochs)),
+        "min_lr": float(getattr(cfg.optim, "min_lr", getattr(cfg.sched, "eta_min", 1e-6))),
+    }
+
+    if task_type == "bc":
+        # Loss for BC if provided
+        criterion = None
+        if hasattr(cfg, "loss") and cfg.loss is not None:
+            loss_cfg = OmegaConf.to_container(cfg.loss, resolve=True) if isinstance(cfg.loss, DictConfig) else dict(cfg.loss)
+            loss_name = loss_cfg.get("name")
+            loss_kwargs = {k: v for k, v in loss_cfg.items() if k != "name"}
+            criterion = LOSS_REGISTRY.build(loss_name, **loss_kwargs)
+
+        lit = TASK_REGISTRY.build(
+            "bc",
+            model=model,
+            action_space=str(getattr(cfg.task, "action_space", "discrete")),
+            criterion=criterion,
+            optim_name=cfg.optim.name,
+            optim_kwargs=optim_kwargs,
+            sched_name=cfg.sched.name,
+            sched_kwargs=sched_kwargs,
+            ema_enable=ema_enable,
+            ema_decay=ema_decay,
         )
     else:
-        datamodule = DATAMODULE_REGISTRY.build(
-            cfg.data.name,
-            root=cfg.data.root,
-            download=cfg.data.download,
-            mean=cfg.data.mean,
-            std=cfg.data.std,
-            batch_size=cfg.io.batch_size,
-            num_workers=cfg.io.num_workers,
-            prefetch_factor=cfg.io.prefetch_factor,
-            persistent_workers=cfg.io.persistent_workers,
-            pin_memory=cfg.io.pin_memory,
+        # RL: build env via Hydra if provided (build before task)
+        if hasattr(cfg, "env") and isinstance(cfg.env, DictConfig) and "_target_" in cfg.env:
+            env = instantiate(cfg.env)
+        else:
+            raise RuntimeError("RL task requires cfg.env with a valid _target_")
+
+        # Optionally infer dims from env to rebuild model if needed
+        try:
+            obs_dim = None
+            try:
+                obs_spec = getattr(env, "observation_spec")
+                obs_dim = int(obs_spec["observation"]["observation"].shape[-1])
+            except Exception:
+                try:
+                    td0 = env.reset()
+                    obs_dim = int(td0.get(("observation", "observation")).shape[-1])
+                except Exception:
+                    pass
+            act_dim = None
+            try:
+                act_spec = getattr(env, "action_spec")
+                act_dim = int(act_spec.shape[-1])
+            except Exception:
+                try:
+                    gym_env = getattr(env, "_env", None)
+                    act_dim = int(gym_env.action_space.shape[0]) if gym_env is not None else None
+                except Exception:
+                    pass
+            if obs_dim is not None and act_dim is not None and hasattr(cfg, "model"):
+                model = MODEL_REGISTRY.build(
+                    cfg.model.name,
+                    **{
+                        **{k: v for k, v in dict(cfg.model).items() if k != "name"},
+                        "obs_dim": obs_dim,
+                        "act_dim": act_dim,
+                        "action_dim": act_dim,
+                    }
+                )
+                if cfg.channels_last:
+                    model = model.to(memory_format=torch.channels_last)
+        except Exception:
+            pass
+
+        lit = TASK_REGISTRY.build(
+            "rl",
+            model=model,
+            env=env,
+            rollout_steps=int(getattr(cfg.task, "rollout_steps", 128)),
+            frames_per_batch=int(getattr(cfg.task, "frames_per_batch", 1024)),
+            optim_name=cfg.optim.name,
+            optim_kwargs=optim_kwargs,
+            sched_name=cfg.sched.name,
+            sched_kwargs=sched_kwargs,
+            ema_enable=ema_enable,
+            ema_decay=ema_decay,
+            ppo_clip_coef=float(getattr(cfg.task, "ppo_clip_coef", 0.2)),
+            ppo_entropy_coef=float(getattr(cfg.task, "ppo_entropy_coef", 0.0)),
+            ppo_value_coef=float(getattr(cfg.task, "ppo_value_coef", 0.5)),
+            ppo_update_epochs=int(getattr(cfg.task, "ppo_update_epochs", 4)),
+            gae_gamma=float(getattr(cfg.task, "gae_gamma", 0.99)),
+            gae_lambda=float(getattr(cfg.task, "gae_lambda", 0.95)),
         )
-
-    # Loss: build with only supported kwargs to avoid missing-attribute errors
-    loss_cfg = OmegaConf.to_container(cfg.loss, resolve=True) if isinstance(cfg.loss, DictConfig) else dict(cfg.loss)
-    loss_name = loss_cfg.get("name")
-    loss_reduction = loss_cfg.get("reduction", "mean")
-    loss_kwargs = {"reduction": loss_reduction}
-    if loss_name == "cross_entropy":
-        loss_kwargs["label_smoothing"] = float(loss_cfg.get("label_smoothing", 0.0))
-    criterion = LOSS_REGISTRY.build(loss_name, **loss_kwargs)
-
-    lit = LitClassifier(
-        model=model,
-        criterion=criterion,
-        optim_name=cfg.optim.name,
-        optim_kwargs={
-            "lr": cfg.optim.lr,
-            "betas": tuple(cfg.optim.betas),
-            "weight_decay": cfg.optim.weight_decay,
-            "fused": bool(getattr(cfg.optim, "fused", False)),
-        },
-        sched_name=cfg.sched.name,
-        sched_kwargs={
-            "t_max": int(cfg.sched.t_max) if cfg.sched.t_max is not None else int(cfg.optim.max_epochs),
-            "eta_min": cfg.sched.eta_min,
-            "warmup_epochs": int(getattr(cfg.optim, "warmup_epochs", 0)),
-            "max_epochs": int(getattr(cfg.optim, "max_epochs", cfg.trainer.max_epochs)),
-            "min_lr": float(getattr(cfg.optim, "min_lr", cfg.sched.eta_min)),
-        },
-        ema_enable=bool(getattr(cfg, "ema", {}).get("enable", False)),
-        ema_decay=float(getattr(cfg, "ema", {}).get("decay", 0.9999)),
-    )
 
     # Resolve Hydra run directory
     run_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -120,12 +220,15 @@ def main(cfg: DictConfig):
 
     # Checkpoints -> run_dir/ckpts
     ckpt_dir = run_dir / "ckpts"
+    monitor_metric = str(getattr(cfg.trainer, "monitor", "val_loss" if task_type == "bc" else "eval_return"))
+    monitor_mode = str(getattr(cfg.trainer, "monitor_mode", "min" if task_type == "bc" else "max"))
+    ckpt_filename = str(getattr(cfg.trainer, "ckpt_filename", "epoch{epoch:02d}-{monitor}"))
     ckpt_cb = ModelCheckpoint(
         dirpath=str(ckpt_dir),
-        filename="epoch{epoch:02d}-valacc{val_acc:.4f}",
-        monitor="val_acc",
-        mode="max",
-        save_top_k=3,
+        filename=ckpt_filename,
+        monitor=monitor_metric,
+        mode=monitor_mode,
+        save_top_k=int(getattr(cfg.trainer, "save_top_k", 3)),
         save_last=True,
         auto_insert_metric_name=False,
     )
@@ -168,8 +271,8 @@ def main(cfg: DictConfig):
     if es_cfg and bool(getattr(es_cfg, "enable", False)):
         callbacks.append(
             EarlyStopping(
-                monitor=str(getattr(es_cfg, "monitor", "val_acc")),
-                mode=str(getattr(es_cfg, "mode", "max")),
+                monitor=str(getattr(es_cfg, "monitor", monitor_metric)),
+                mode=str(getattr(es_cfg, "mode", monitor_mode)),
                 patience=int(getattr(es_cfg, "patience", 20)),
                 min_delta=float(getattr(es_cfg, "min_delta", 0.0)),
             )
@@ -207,8 +310,12 @@ def main(cfg: DictConfig):
 
     # Track total pipeline runtime (training + evaluation)
     _pipeline_t0 = time.perf_counter()
-    trainer.fit(lit, datamodule=datamodule)
-    trainer.test(lit, datamodule=datamodule)
+    if task_type == "bc":
+        assert datamodule is not None, "BC requires a datamodule"
+        trainer.fit(lit, datamodule=datamodule)
+        trainer.test(lit, datamodule=datamodule)
+    else:
+        trainer.fit(lit)
     _total_time_sec = float(time.perf_counter() - _pipeline_t0)
 
     # After training: export best bundle under run_dir/best

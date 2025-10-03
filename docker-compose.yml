@@ -7,7 +7,7 @@ services:
       args:
         USER_ID: ${UID:-1000}
         GROUP_ID: ${GID:-1000}
-    image: cifar10-vit:dev
+    image: franka-kitchen:dev
     working_dir: /workspace
     # Mount the whole repo; output/ and data/ are inside it
     volumes:
@@ -16,9 +16,13 @@ services:
     environment:
       - DATA_ROOT=/workspace/data
       - OUTPUT_DIR=/workspace/output
+      - MUJOCO_GL=egl
+      - DISPLAY=
+      - MINARI_DATA_DIR=/workspace/data/minari
     shm_size: "8g"         # helps with many DataLoader workers
     gpus: all              # enable NVIDIA GPUs
-    entrypoint: ["/usr/bin/tini", "--", "python", "-m", "src.train_lightning"]
+    entrypoint: ["/usr/bin/tini", "--"]
+    command: ["python", "-m", "src.train_lightning"]
 
 volumes:
   pip-cache:

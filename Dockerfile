@@ -1,5 +1,5 @@
 # Dockerfile
-FROM pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime
+FROM pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime
 
 ARG USER_ID=1000
 ARG GROUP_ID=1000
@@ -20,12 +20,13 @@ RUN mkdir -p ${DATA_ROOT} ${OUTPUT_DIR}
 
 # Useful system deps + tini for proper signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git ca-certificates tini && \
+      git ca-certificates tini patchelf && \
     rm -rf /var/lib/apt/lists/*
 
 # Pre-install Python deps (cache layer)
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt && \
+    python -c "import mujoco; print('mujoco version', mujoco.__version__)"
 
 # We'll mount the repo at /workspace via docker-compose; no COPY of code needed.
 ENTRYPOINT ["/usr/bin/tini","--"]

@@ -1,60 +1,56 @@
-# ViTCIFAR-Lightning-Example
-Repo displaying good pipeline design using lightning to focus on implementation rather than boilerplate
+## Franka Kitchen BC & RL Benchmark
 
-## Run in Docker
+This repo provides ready-to-run BC and RL training and Ray Tune search on the Franka Kitchen benchmark.
 
-Build the image (first time or after dependency changes):
+Highlights:
+- Minari offline datasets: `kitchen-complete-v1`, `kitchen-mixed-v1`, `kitchen-partial-v1`
+- Gymnasium-Robotics env wrapped with TorchRL `GymWrapper`
+- BC: deterministic MLP with `tanh` head, MSE loss, observation normalization
+- RL: PPO with GAE, Gaussian actor-critic, TorchRL `SyncDataCollector`
+- Ray Tune search for BC and RL, plus quick debug runs
 
+### Prerequisites
+Docker with NVIDIA runtime and GPUs. Compose builds an image with Mujoco, Minari, TorchRL, and Ray.
+
+### Build
 ```bash
-docker compose build --no-cache
+docker compose build
 ```
 
-Start a training run with the base defaults:
-
+### Quick debug checks
+Runs tiny BC/RL and tiny searches to verify plumbing and logging:
 ```bash
-docker compose run --rm train-lightning
+docker compose run --rm train-lightning python -m src.tests.debug_runs
 ```
 
-### Switch experiments (Hydra groups)
-
-Experiments are Hydra groups registered via ConfigStore. Select them by name:
-
+### Behavioral Cloning (single run)
+Complete dataset by default; change `data.dataset_id` for mixed/partial.
 ```bash
-# Default (vit_cifar10)
-docker compose run --rm train-lightning
-
-# Quick debug run (smaller batch, few epochs)
-docker compose run --rm train-lightning exp=quick_debug
+docker compose run --rm train-lightning \
+  python -m src.train_lightning +exp=bc_quick
 ```
 
-You can also override any field at the CLI:
-
+### RL PPO on Franka Kitchen (single run)
 ```bash
-docker compose run --rm train-lightning exp=vit_cifar10 io.batch_size=256 trainer.devices=1
+docker compose run --rm train-lightning \
+  python -m src.train_lightning +exp=rl_ppo_cartpole
 ```
 
-### Registry-based components
-
-Models, datamodules, optimizers, schedulers, and losses are resolved via simple registries with decorators:
-
-```python
-from src.registry import register_model
-
-@register_model("vit")
-class VisionTransformer(nn.Module):
-    ...
+### Ray Tune searches
+- BC search (val_loss, minimize):
+```bash
+docker compose run --rm train-lightning \
+  python -m src.tune_search bc
 ```
 
-- Model: `model.name=vit`
-- Data: `data.name=cifar10`
-- Optimizer: `optim.name=adamw`
-- Scheduler: `sched.name=cosine`
-- Loss: `loss.name=cross_entropy`
+- RL search (eval_return, maximize):
+```bash
+docker compose run --rm train-lightning \
+  python -m src.tune_search rl
+```
 
-This avoids fragile `_target_` strings and makes swapping components trivial.
+Results and logs are under `output/` (mounted in the container). Best checkpoints are exported to `best/` in each run dir.
 
-### Notes
-
-- Hydra output directories default under `./output` or `${OUTPUT_DIR}` if set.
-- The script prints the resolved config on start.
-- For a full error stack, set `HYDRA_FULL_ERROR=1`.
+### Notes on best practices
+- BC: Normalize observations; `tanh`-bounded actions; AdamW with cosine schedule and warmup; EMA optional.
+- RL: PPO with GAE; gradient clipping; moderate entropy coef; squash actions with `tanh`.

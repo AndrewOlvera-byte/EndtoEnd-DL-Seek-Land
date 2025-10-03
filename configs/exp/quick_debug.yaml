@@ -1,25 +1,42 @@
-# @package _global_
-# configs/exp/quick_debug.yaml
+@package _global_
 defaults:
-  - /data: cifar_10
-  - /model: vit_small
+  - /task: bc
   - /optim: adamw
   - /sched: cosine
   - /trainer: lightning
-  - /loss: soft_cross_entropy
   - _self_
 
-# Fast iteration settings
+model:
+  name: bc_policy
+  obs_dim: 60  # overwritten at runtime if datamodule exposes dims
+  hidden_sizes: [256, 128]
+  act_dim: 9
+
+data:
+  name: minari_kitchen_bc
+  dataset_id: kitchen-complete-v1
+  split_ratio: 0.98
+
+loss:
+  name: mse
+
 optim:
-  max_epochs: 5
+  max_epochs: 3
+  lr: 3e-4
+  betas: [0.9, 0.999]
+  weight_decay: 0.0
   fused: false
-  
+
 trainer:
+  monitor: val_loss
+  monitor_mode: min
+  save_top_k: 1
   check_val_every_n_epoch: 1
-  
+  num_sanity_val_steps: 1
+
 io:
   batch_size: 128
-  num_workers: 8
-  prefetch_factor: 4
-  persistent_workers: true
+  num_workers: 4
+  prefetch_factor: 2
+  persistent_workers: false
   pin_memory: true

@@ -56,3 +56,7 @@ class SoftTargetCrossEntropy(nn.Module):
 def build_soft_cross_entropy(reduction: str = "mean") -> nn.Module:
     return SoftTargetCrossEntropy(reduction=reduction)
 
+
+@register_loss("mse")
+def build_mse(reduction: str = "mean") -> nn.Module:
+    return nn.MSELoss(reduction=reduction)

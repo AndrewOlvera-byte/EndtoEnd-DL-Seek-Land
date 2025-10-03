@@ -1,3 +1,4 @@
+### Removed legacy file in previous step; keeping empty placeholder to avoid accidental references.
 _target_: src.models.vit.VisionTransformer
 image_size: ${data.img_size}
 patch_size: 4         # 32/4 => 8×8=64 tokens (+cls) works well for CIFAR-10

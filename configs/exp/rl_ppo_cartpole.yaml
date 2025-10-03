@@ -1,0 +1,45 @@
+# @package _global_
+defaults:
+  - /task: rl
+  - /optim: adamw
+  - /sched: cosine
+  - /trainer: lightning
+  - _self_
+
+model:
+  name: gaussian_actor_critic
+  obs_dim: 60
+  hidden_sizes: [256, 256]
+  act_dim: 9
+  init_log_std: -0.5
+
+env:
+  _target_: src.envs.franka_kitchen.build_franka_kitchen_env
+  tasks_to_complete: ["microwave", "kettle", "slide_cabinet", "top_burner"]
+  device: ${device}
+
+optim:
+  name: adamw
+  lr: 3e-4
+  betas: [0.9, 0.999]
+  weight_decay: 0.0
+  max_epochs: 500
+
+task:
+  name: rl
+  rollout_steps: 512
+  frames_per_batch: 8192
+  ppo_clip_coef: 0.2
+  ppo_entropy_coef: 0.0
+  ppo_value_coef: 0.5
+  ppo_update_epochs: 10
+  gae_gamma: 0.99
+  gae_lambda: 0.95
+
+trainer:
+  monitor: eval_return
+  monitor_mode: max
+  save_top_k: 3
+  check_val_every_n_epoch: 1
+  gradient_clip_val: 0.5
+

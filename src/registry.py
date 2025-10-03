@@ -41,6 +41,10 @@ OPTIMIZER_REGISTRY = Registry()
 SCHEDULER_REGISTRY = Registry()
 LOSS_REGISTRY = Registry()
 DATAMODULE_REGISTRY = Registry()
+# New registries for tasks and RL components
+TASK_REGISTRY = Registry()
+ENV_REGISTRY = Registry()
+AGENT_REGISTRY = Registry()
 
 
 # Convenience decorators
@@ -62,5 +66,17 @@ def register_loss(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any
 
 def register_datamodule(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     return DATAMODULE_REGISTRY.register(name)
+
+
+def register_task(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    return TASK_REGISTRY.register(name)
+
+
+def register_env(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    return ENV_REGISTRY.register(name)
+
+
+def register_agent(name: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    return AGENT_REGISTRY.register(name)
 
 

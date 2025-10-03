@@ -1,0 +1,83 @@
+@package _global_
+defaults:
+  - /task: bc
+  - /optim: adamw
+  - /sched: cosine
+  - /trainer: lightning
+  - _self_
+
+model:
+  name: bc_policy
+  obs_dim: 60
+  hidden_sizes: [256, 128]
+  act_dim: 9
+
+data:
+  name: minari_kitchen_bc
+  dataset_id: kitchen-complete-v1
+  split_ratio: 0.98
+
+loss:
+  name: mse
+
+optim:
+  max_epochs: 50
+  lr: 3e-4
+  betas: [0.9, 0.999]
+  weight_decay: 1e-4
+  warmup_epochs: 2
+  min_lr: 1e-5
+  fused: false
+
+sched:
+  name: cosine
+  t_max: ${optim.max_epochs}
+  eta_min: ${optim.min_lr}
+
+trainer:
+  monitor: val_loss
+  monitor_mode: min
+  save_top_k: 3
+  check_val_every_n_epoch: 1
+  gradient_clip_val: 1.0
+
+io:
+  batch_size: 1024
+  num_workers: 8
+  prefetch_factor: 4
+  persistent_workers: true
+  pin_memory: true
+# @package _global_
+defaults:
+  - /task: bc
+  - /optim: adamw
+  - /sched: cosine
+  - /trainer: lightning
+  - _self_
+
+# Simple MLP for low-dim obs; override for images
+model:
+  name: mlp
+  input_dim: 4
+  hidden_sizes: [128, 128]
+  output_dim: 2
+  activation: relu
+
+data:
+  name: trajectory_bc
+  root: ${oc.env:DATA_ROOT, data}/bc_cartpole
+  obs_is_image: false
+
+optim:
+  name: adamw
+  lr: 3e-4
+  betas: [0.9, 0.999]
+  weight_decay: 0.0
+  max_epochs: 20
+
+trainer:
+  monitor: val_loss
+  monitor_mode: min
+  save_top_k: 3
+  check_val_every_n_epoch: 1
+

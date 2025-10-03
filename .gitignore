@@ -5,3 +5,7 @@
 /src/models/__pycache__
 /src/data/__pycache__
 /output
+config_dump.yaml
+config_dump.yaml
+/src/tasks/__pycache__
+/src/tests/__pycache__

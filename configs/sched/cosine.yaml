@@ -1,4 +1,4 @@
-# Scheduler hyperparams
+# @package sched
 name: cosine
 # If null, we will use optim.max_epochs in code
 t_max: null

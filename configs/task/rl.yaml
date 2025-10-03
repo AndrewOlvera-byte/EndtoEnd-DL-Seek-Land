@@ -1,0 +1,12 @@
+# @package task
+name: rl
+rollout_steps: 128
+frames_per_batch: 2048
+ppo_clip_coef: 0.2
+ppo_entropy_coef: 0.0
+ppo_value_coef: 0.5
+ppo_update_epochs: 4
+gae_gamma: 0.99
+gae_lambda: 0.95
+
+
